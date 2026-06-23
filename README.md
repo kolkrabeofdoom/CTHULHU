@@ -11,7 +11,7 @@ Ein elegantes, schnelles und sicheres Werkzeug zur Massenentfernung von Blocks a
 *   **Sicherer Worker-Queue:** Arbeitet mit kontrollierter Nebenläufigkeit (Concurrency) und automatischem Rate-Limit-Handling, um PDS-Überlastungen zu vermeiden.
 *   **Behebung von Phantom-Blocks:** Erkennt Diskrepanzen zwischen dem Bluesky AppView-Index und der physischen PDS-Datenbank und behebt diese automatisch (siehe [Phantom-Blocks-Erklärung](#-das-phantom-block-problem)).
 *   **Umfangreiches Live-Logging:** Detaillierte Fehlerberichte, Erfolgsmeldungen und Echtzeit-Statistiken während der Ausführung.
-*   **Steuerungselemente:** Jederzeit pausieren, fortsetzen oder abbrechen.
+*   **Steuerungselemente & Echtzeit-Rescan:** Jederzeit pausieren, fortsetzen oder abbrechen. Nach Abschluss der Massenentfernung kannst du die Blockliste mit einem Klick neu scannen und final verifizieren.
 *   **Modernes Design:** Premium Darkmode-Layout mit flüssigen Animationen und Responsive Webdesign (für Desktop, Tablet und Smartphones).
 
 ---

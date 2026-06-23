@@ -45,6 +45,8 @@ const DOM = {
     btnPause: document.getElementById('btn-pause'),
     btnResume: document.getElementById('btn-resume'),
     btnCancel: document.getElementById('btn-cancel'),
+    finishedControls: document.getElementById('finished-controls'),
+    btnRescanFinished: document.getElementById('btn-rescan-finished'),
     
     searchInput: document.getElementById('search-input'),
     btnSelectAll: document.getElementById('btn-select-all'),
@@ -57,6 +59,7 @@ const DOM = {
     btnUnblockSelected: document.getElementById('btn-unblock-selected'),
     btnUnblockAll: document.getElementById('btn-unblock-all'),
     visibleCountBadge: document.getElementById('visible-count-badge'),
+    btnRescan: document.getElementById('btn-rescan'),
     
     loadingBlocks: document.getElementById('loading-blocks'),
     loadingCursorText: document.getElementById('loading-cursor-text'),
@@ -273,6 +276,7 @@ function setActionButtonsDisabled(disabled) {
     DOM.btnUnblockSelected.disabled = disabled;
     DOM.btnUnblockAll.disabled = disabled;
     DOM.searchInput.disabled = disabled;
+    DOM.btnRescan.disabled = disabled;
     
     // Also disable individual checkboxes in DOM
     const checkboxes = DOM.blockListGrid.querySelectorAll('input[type="checkbox"]');
@@ -294,6 +298,7 @@ function logout() {
     
     DOM.workspaceSection.classList.add('hidden');
     DOM.loginSection.classList.remove('hidden');
+    DOM.finishedControls.classList.add('hidden');
     DOM.identifierInput.value = '';
     DOM.passwordInput.value = '';
     DOM.loginError.classList.add('hidden');
@@ -595,6 +600,7 @@ function startUnblockingFlow(users) {
     setActionButtonsDisabled(true);
     DOM.progressContainer.classList.remove('hidden');
     DOM.executionControls.classList.remove('hidden');
+    DOM.finishedControls.classList.add('hidden');
     DOM.btnPause.classList.remove('hidden');
     DOM.btnResume.classList.add('hidden');
     DOM.btnCancel.disabled = false;
@@ -767,6 +773,7 @@ function finishUnblockingFlow() {
     
     DOM.progressContainer.classList.add('hidden');
     DOM.executionControls.classList.add('hidden');
+    DOM.finishedControls.classList.remove('hidden');
     
     setActionButtonsDisabled(false);
     updateStats();
@@ -827,4 +834,16 @@ DOM.btnCancel.addEventListener('click', () => {
 // Clear Logs Console
 DOM.btnClearLogs.addEventListener('click', () => {
     DOM.logTerminal.innerHTML = '<div class="log-entry system">[System] Protokoll geleert.</div>';
+});
+
+// Rescan Blocklist Handlers
+DOM.btnRescan.addEventListener('click', () => {
+    if (state.isProcessing) return;
+    fetchAllBlocks();
+});
+
+DOM.btnRescanFinished.addEventListener('click', () => {
+    if (state.isProcessing) return;
+    DOM.finishedControls.classList.add('hidden');
+    fetchAllBlocks();
 });

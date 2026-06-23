@@ -117,6 +117,23 @@
                             <button id="btn-resume" class="btn btn-primary hidden">Fortsetzen</button>
                             <button id="btn-cancel" class="btn btn-danger">Abbrechen</button>
                         </div>
+
+                        <!-- Finished State Controls -->
+                        <div class="finished-controls hidden" id="finished-controls" style="margin-top: 15px; text-align: center;">
+                            <div class="success-box" style="margin-bottom: 12px; font-size: 0.9rem; justify-content: center;">
+                                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink: 0;">
+                                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                                    <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                                </svg>
+                                <span>Vorgang abgeschlossen & verifiziert!</span>
+                            </div>
+                            <button id="btn-rescan-finished" class="btn btn-primary" style="width: 100%;" title="Blockliste neu laden und verifizieren">
+                                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" class="rescan-icon" style="margin-right: 6px; vertical-align: middle;">
+                                    <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path>
+                                </svg>
+                                <span>Blockliste neu scannen</span>
+                            </button>
+                        </div>
                     </div>
 
                     <!-- Action Control Panel -->
@@ -167,7 +184,15 @@
                 <div class="card list-card fade-in">
                     <div class="card-header-flex">
                         <h2>Blockierte Konten</h2>
-                        <span class="badge" id="visible-count-badge">0 geladen</span>
+                        <div class="header-actions-group">
+                            <span class="badge" id="visible-count-badge">0 geladen</span>
+                            <button id="btn-rescan" class="btn btn-small btn-secondary" title="Blockliste neu laden und verifizieren">
+                                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" class="rescan-icon" style="margin-right: 4px; vertical-align: middle;">
+                                    <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path>
+                                </svg>
+                                <span>Erneut scannen</span>
+                            </button>
+                        </div>
                     </div>
                     
                     <div id="loading-blocks" class="loading-state">

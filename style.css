@@ -63,7 +63,7 @@ body {
     height: 100vh;
     z-index: -1;
     background: var(--bg-gradient);
-    overflow: hidden;
+    overflow: visible;
 }
 
 .glass-bg::before, .glass-bg::after {
@@ -166,6 +166,8 @@ h1 {
     backdrop-filter: blur(16px);
     -webkit-backdrop-filter: blur(16px);
     transition: var(--transition);
+    transform: translateZ(0);
+    backface-visibility: hidden;
 }
 
 .card:hover {

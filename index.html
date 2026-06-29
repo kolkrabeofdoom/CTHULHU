@@ -103,6 +103,7 @@
                 <!-- Tabs Navigation -->
                 <div class="workspace-tabs fade-in">
                     <button type="button" class="tab-btn active" id="tab-btn-blocklist" data-tab="tab-blocklist">🛡️ Block-Entferner</button>
+                    <button type="button" class="tab-btn" id="tab-btn-blocker" data-tab="tab-blocker">🚫 Blockieren</button>
                     <button type="button" class="tab-btn" id="tab-btn-followers" data-tab="tab-followers">👥 Follower-Abgleich</button>
                     <button type="button" class="tab-btn" id="tab-btn-overlap" data-tab="tab-overlap">🔍 Überlappungs-Finder</button>
                     <button type="button" class="tab-btn" id="tab-btn-ghosts" data-tab="tab-ghosts">👻 Geister-Auditor</button>
@@ -327,6 +328,160 @@
 
                         <!-- Blocklist Grid -->
                         <div id="block-list-grid" class="block-grid hidden"></div>
+                    </div>
+                </div>
+
+                <!-- TAB: BLOCKER -->
+                <div id="tab-blocker" class="tab-content hidden fade-in">
+                    <div class="dashboard-grid">
+                        <!-- Block Sources Card -->
+                        <div class="card stats-card fade-in">
+                            <h3>1. Block-Quellen</h3>
+                            
+                            <!-- Form 1: Single User Block -->
+                            <div class="block-section-form" style="margin-bottom: 20px; border-bottom: 1px solid var(--card-border); padding-bottom: 20px;">
+                                <h4 style="font-size: 0.95rem; font-weight: 600; color: var(--text-primary); margin-bottom: 8px;">Einzelnen User blockieren</h4>
+                                <div class="form-group" style="margin-bottom: 10px;">
+                                    <label for="blocker-single-identifier">Bluesky Handle / DID</label>
+                                    <input type="text" id="blocker-single-identifier" placeholder="z.B. user.bsky.social">
+                                </div>
+                                <button type="button" id="btn-blocker-single-block" class="btn btn-danger-action" style="width: 100%;">
+                                    <span>User sofort blockieren</span>
+                                </button>
+                                <div id="blocker-single-error" class="error-box hidden" style="margin-top: 10px;"></div>
+                            </div>
+
+                            <!-- Form 2: Load User Followers -->
+                            <div class="block-section-form" style="margin-bottom: 20px; border-bottom: 1px solid var(--card-border); padding-bottom: 20px;">
+                                <h4 style="font-size: 0.95rem; font-weight: 600; color: var(--text-primary); margin-bottom: 8px;">Follower eines Users blockieren</h4>
+                                <div class="form-group" style="margin-bottom: 10px;">
+                                    <label for="blocker-followers-identifier">Ziel-User Handle / DID</label>
+                                    <input type="text" id="blocker-followers-identifier" placeholder="z.B. zielname.bsky.social">
+                                </div>
+                                <button type="button" id="btn-blocker-followers-load" class="btn btn-primary" style="width: 100%;">
+                                    <span>Follower als Kandidaten laden</span>
+                                    <span class="spinner hidden"></span>
+                                </button>
+                            </div>
+
+                            <!-- Form 3: Load Post Likers -->
+                            <div class="block-section-form">
+                                <h4 style="font-size: 0.95rem; font-weight: 600; color: var(--text-primary); margin-bottom: 8px;">Liker eines Posts blockieren</h4>
+                                <div class="form-group" style="margin-bottom: 10px;">
+                                    <label for="blocker-post-url">Bluesky Post-URL</label>
+                                    <input type="text" id="blocker-post-url" placeholder="https://bsky.app/profile/name/post/3kx...">
+                                </div>
+                                <button type="button" id="btn-blocker-post-load" class="btn btn-primary" style="width: 100%;">
+                                    <span>Liker als Kandidaten laden</span>
+                                    <span class="spinner hidden"></span>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Status & Actions Card -->
+                        <div class="card action-card fade-in">
+                            <h3>2. Status & Aktionen</h3>
+                            
+                            <!-- Stats Grid -->
+                            <div class="stats-grid" style="margin-bottom: 20px;">
+                                <div class="stat-item">
+                                    <span class="stat-value" id="stat-blocker-loaded">0</span>
+                                    <span class="stat-label">Geladen</span>
+                                </div>
+                                <div class="stat-item">
+                                    <span class="stat-value" id="stat-blocker-selected">0</span>
+                                    <span class="stat-label">Ausgewählt</span>
+                                </div>
+                                <div class="stat-item success">
+                                    <span class="stat-value" id="stat-blocker-success">0</span>
+                                    <span class="stat-label">Blockiert</span>
+                                </div>
+                                <div class="stat-item error">
+                                    <span class="stat-value" id="stat-blocker-error">0</span>
+                                    <span class="stat-label">Fehler</span>
+                                </div>
+                            </div>
+
+                            <div class="filter-actions">
+                                <div class="selection-buttons" style="margin-bottom: 15px;">
+                                    <button id="btn-blocker-select-all" class="btn btn-small btn-secondary">Alle markieren</button>
+                                    <button id="btn-blocker-deselect-all" class="btn btn-small btn-secondary">Aufheben</button>
+                                </div>
+                            </div>
+
+                            <div class="action-buttons-group">
+                                <button id="btn-blocker-block-selected" class="btn btn-danger-action btn-large">
+                                    <span>Markierte Kandidaten blockieren</span>
+                                </button>
+                                <button id="btn-blocker-block-all" class="btn btn-danger-action btn-large" style="margin-top: 8px;">
+                                    <span>ALLE geladenen Kandidaten blockieren</span>
+                                </button>
+                            </div>
+
+                            <!-- Blocker Progress Bar -->
+                            <div class="progress-container hidden" id="blocker-progress-container" style="margin-top: 20px;">
+                                <div class="progress-bar-wrapper">
+                                    <div class="progress-bar" id="blocker-progress-bar" style="width: 0%;"></div>
+                                </div>
+                                <div class="progress-text" id="blocker-progress-text">Blockiere...</div>
+                            </div>
+
+                            <!-- Blocker Execution Controls -->
+                            <div class="execution-controls hidden" id="blocker-execution-controls" style="margin-top: 15px;">
+                                <button id="btn-blocker-pause" class="btn btn-warning">Pause</button>
+                                <button id="btn-blocker-resume" class="btn btn-primary hidden">Fortsetzen</button>
+                                <button id="btn-blocker-cancel" class="btn btn-danger">Abbrechen</button>
+                            </div>
+
+                            <!-- Liste erstellen/ergänzen -->
+                            <div class="list-tools-section" style="margin-top: 20px; border-top: 1px solid var(--card-border); padding-top: 15px;">
+                                <h4 style="font-size: 0.85rem; font-weight: 600; text-transform: uppercase; color: var(--text-muted); margin-bottom: 10px; letter-spacing: 0.5px;">In Liste packen</h4>
+                                
+                                <div class="form-group" style="margin-bottom: 10px;">
+                                    <label for="blocker-list-select">Bestehende Liste auswählen</label>
+                                    <select id="blocker-list-select" style="width: 100%; padding: 12px 16px; background: rgba(15, 23, 42, 0.6); border: 1px solid var(--card-border); border-radius: var(--radius-sm); color: var(--text-primary); cursor: pointer;">
+                                        <option value="" disabled selected>Lade Listen...</option>
+                                    </select>
+                                </div>
+                                <button type="button" id="btn-blocker-add-existing-list" class="btn btn-secondary" style="width: 100%; margin-bottom: 15px;">
+                                    <span>Zu ausgewählter Liste hinzufügen</span>
+                                </button>
+                                
+                                <div class="form-group" style="margin-bottom: 10px;">
+                                    <label for="blocker-list-new-name">Neue Liste erstellen & befüllen</label>
+                                    <input type="text" id="blocker-list-new-name" placeholder="z.B. Block-Kandidaten">
+                                </div>
+                                <button type="button" id="btn-blocker-create-new-list" class="btn btn-secondary" style="width: 100%;">
+                                    <span>Neue Liste erstellen & befüllen</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Blocker Candidates List Card -->
+                    <div class="card list-card fade-in" style="margin-top: 25px;">
+                        <div class="card-header-flex">
+                            <h2>Kandidaten zum Blockieren</h2>
+                            <span class="badge" id="blocker-visible-count-badge">0 geladen</span>
+                        </div>
+                        
+                        <div id="loading-blocker" class="loading-state hidden">
+                            <span class="spinner-large"></span>
+                            <p>Lade Profile... Bitte warten.</p>
+                        </div>
+                        
+                        <div id="empty-blocker" class="empty-state">
+                            <p>Wähle eine Quelle oben aus, um Konten zum Blockieren zu laden.</p>
+                        </div>
+
+                        <!-- Candidates Grid -->
+                        <div id="blocker-list-grid" class="block-grid hidden"></div>
+                        
+                        <!-- Pagination controls -->
+                        <div class="pagination-controls" style="margin-top: 20px; display: flex; justify-content: center; gap: 10px;">
+                            <button id="btn-blocker-load-more" class="btn btn-secondary hidden">Mehr laden</button>
+                            <button id="btn-blocker-load-all" class="btn btn-secondary hidden">Alle laden</button>
+                        </div>
                     </div>
                 </div>
 

@@ -11,7 +11,7 @@
 *Eine leistungsstarke, browserbasierte Suite zur Verwaltung von Bluesky-Konten*
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-2.0.0-brightgreen.svg)](https://github.com/kolkrabeofdoom/CTHULHU/releases)
+[![Version](https://img.shields.io/badge/version-2.1.0-brightgreen.svg)](https://github.com/kolkrabeofdoom/CTHULHU/releases)
 [![Platform](https://img.shields.io/badge/platform-Bluesky%20%2F%20AT%20Protocol-0085ff.svg)](https://bsky.app)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D18-green.svg)](https://nodejs.org)
 
@@ -28,6 +28,7 @@
 | Modul | Beschreibung |
 |---|---|
 | 🛡️ **Block-Entferner** | Massen-Entblockung von Benutzern mit Erkennung von Phantom-Einträgen, Whitelist-Schutz & Concurrency-Workern |
+| 🚫 **Massen-Blocker** | Blockieren einzelner Benutzer, aller Follower eines Kontos oder aller Liker eines Beitrags mit automatischem Schutz für gegenseitige Abonnements (Mutuals) und Option zur Listenspeicherung |
 | 👥 **Follower-Abgleich** | Vergleiche deine Follows/Follower, finde Nicht-Mutuals, filtere Bios nach Keywords, führe Massen-Follows oder -Unfollows durch |
 | 🔍 **Überlappungs-Finder** | Finde gemeinsame Follower zwischen 2–3 Bluesky-Konten, filtere nach Bio-Keywords und folge der Schnittmenge im Batch |
 | 👻 **Geister-Auditor** | Überprüfe deine Follower-Liste auf Bots, inaktive Konten (inkl. zeitbasierter Inaktivität >90 Tage) und filtere nach Bio-Schlüsselwörtern |
@@ -101,6 +102,36 @@ flowchart TD
     
     E5 --> F7(Aktion im Verlauf protokollieren)
     F7 --> E6{{Verlaufseintrag für Undo bereit}}
+```
+
+---
+
+### 🚫 Massen-Blocker (Bulk Blocker) [Vampirpflock-Update]
+
+Dieses Modul ermöglicht gezielte Massenblockierungen und schützt gleichzeitig deine engen Kontakte:
+
+- **Einzelblock**: Blockiere einzelne Konten direkt über deren Handle oder DID mit einer automatischen Sicherheitsprüfung.
+- **Follower-basiertes Blockieren**: Lade die Follower-Liste eines beliebigen Bluesky-Kontos als Kandidaten zur Massenblockierung.
+- **Liker-basiertes Blockieren**: Extrahiere alle Accounts, die einen bestimmten Beitrag (über die Post-URL) gelikt haben, um sie im Batch zu blockieren.
+- **Automatischer Schutz für Mutuals**: Gegenseitige Abonnements (Mutuals) werden automatisch als **"Mutual (Geschützt)"** markiert. Ihre Checkboxen sind gesperrt, sie werden von Massenauswahlen ("Alle markieren") ausgeschlossen und die Queue überspringt sie bei der Ausführung automatisch.
+- **Listen-Export**: Verpacke geladene Kandidaten direkt in eine neue oder bestehende Kurationsliste, um sie später zu verwalten.
+- **Undo-Integration**: Jede Massenblockierung wird im Aktionsverlauf registriert und kann mit einem Klick rückgängig gemacht werden.
+
+#### EPK-Prozessdiagramm (Ereignisgesteuerte Prozesskette)
+
+```mermaid
+flowchart TD
+    E1{{Kandidatenliste geladen}} --> F1(Aktion starten & Filter anwenden)
+    F1 --> F2(Mutuals automatisch ausschließen & schützen)
+    F2 --> E2{{Blockier-Queue vorbereitet}}
+    E2 --> F3(Queue-Worker abarbeiten)
+    F3 --> F4{{"Kandidat ist Mutual?"}}
+    F4 -- Ja --> F5(Überspringen & loggen)
+    F4 -- Nein --> F6(Blockierung ausführen - createRecord)
+    F5 --> E3{{Kandidat verarbeitet}}
+    F6 --> E3
+    E3 --> F7(Aktion im Verlauf für Undo protokollieren)
+    F7 --> E4{{Blockier-Vorgang abgeschlossen}}
 ```
 
 ---

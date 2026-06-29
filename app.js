@@ -46,7 +46,18 @@ const state = {
 
     // C.T.H.U.L.H.U. v1.3.0 Additions
     timelineActors: [],          // [{ did, handle, displayName, avatar, relation, status, selected, postsCount, repostCount, quoteCount }]
-    actionHistory: []            // [{ id, type, description, timestamp, targets: [] }]
+    actionHistory: [],           // [{ id, type, description, timestamp, targets: [] }]
+
+    // Blocker Tab Additions
+    blockerCandidates: [],       // [{ did, handle, displayName, avatar, relation, status, selected }]
+    blockerCursor: '',
+    isBlockerFetching: false,
+    blockerSource: '',           // 'followers' or 'likes'
+    blockerSourceTarget: '',     // The target handle or post URL
+    blockerQueue: [],
+    blockerRunTotal: 0,
+    isBlockerProcessing: false,
+    isBlockerPaused: false
 };
 
 // UI Elements
@@ -307,7 +318,43 @@ const DOM = {
     btnExportWhitelistJson: document.getElementById('btn-export-whitelist-json'),
     btnExportWhitelistCsv: document.getElementById('btn-export-whitelist-csv'),
     btnImportWhitelist: document.getElementById('btn-import-whitelist'),
-    inputWhitelistImport: document.getElementById('input-whitelist-import')
+    inputWhitelistImport: document.getElementById('input-whitelist-import'),
+
+    // Blocker Tab Bindings
+    tabBtnBlocker: document.getElementById('tab-btn-blocker'),
+    tabBlocker: document.getElementById('tab-blocker'),
+    blockerSingleIdentifier: document.getElementById('blocker-single-identifier'),
+    btnBlockerSingleBlock: document.getElementById('btn-blocker-single-block'),
+    blockerSingleError: document.getElementById('blocker-single-error'),
+    blockerFollowersIdentifier: document.getElementById('blocker-followers-identifier'),
+    btnBlockerFollowersLoad: document.getElementById('btn-blocker-followers-load'),
+    blockerPostUrl: document.getElementById('blocker-post-url'),
+    btnBlockerPostLoad: document.getElementById('btn-blocker-post-load'),
+    statBlockerLoaded: document.getElementById('stat-blocker-loaded'),
+    statBlockerSelected: document.getElementById('stat-blocker-selected'),
+    statBlockerSuccess: document.getElementById('stat-blocker-success'),
+    statBlockerError: document.getElementById('stat-blocker-error'),
+    btnBlockerSelectAll: document.getElementById('btn-blocker-select-all'),
+    btnBlockerDeselectAll: document.getElementById('btn-blocker-deselect-all'),
+    btnBlockerBlockSelected: document.getElementById('btn-blocker-block-selected'),
+    btnBlockerBlockAll: document.getElementById('btn-blocker-block-all'),
+    blockerProgressContainer: document.getElementById('blocker-progress-container'),
+    blockerProgressBar: document.getElementById('blocker-progress-bar'),
+    blockerProgressText: document.getElementById('blocker-progress-text'),
+    blockerExecutionControls: document.getElementById('blocker-execution-controls'),
+    btnBlockerPause: document.getElementById('btn-blocker-pause'),
+    btnBlockerResume: document.getElementById('btn-blocker-resume'),
+    btnBlockerCancel: document.getElementById('btn-blocker-cancel'),
+    blockerVisibleCountBadge: document.getElementById('blocker-visible-count-badge'),
+    loadingBlocker: document.getElementById('loading-blocker'),
+    emptyBlocker: document.getElementById('empty-blocker'),
+    blockerListGrid: document.getElementById('blocker-list-grid'),
+    btnBlockerLoadMore: document.getElementById('btn-blocker-load-more'),
+    btnBlockerLoadAll: document.getElementById('btn-blocker-load-all'),
+    blockerListSelect: document.getElementById('blocker-list-select'),
+    btnBlockerAddExistingList: document.getElementById('btn-blocker-add-existing-list'),
+    blockerListNewName: document.getElementById('blocker-list-new-name'),
+    btnBlockerCreateNewList: document.getElementById('btn-blocker-create-new-list')
 };
 
 // --- UTILITIES ---
@@ -2055,6 +2102,7 @@ DOM.btnImportList.addEventListener('click', async () => {
 
 function setupTabs() {
     DOM.tabBtnBlocklist.addEventListener('click', () => switchTab('blocklist'));
+    DOM.tabBtnBlocker.addEventListener('click', () => switchTab('blocker'));
     DOM.tabBtnFollowers.addEventListener('click', () => switchTab('followers'));
     DOM.tabBtnOverlap.addEventListener('click', () => switchTab('overlap'));
     DOM.tabBtnGhosts.addEventListener('click', () => switchTab('ghosts'));
@@ -2065,7 +2113,7 @@ function setupTabs() {
 }
 
 function switchTab(tabId) {
-    const tabs = ['blocklist', 'followers', 'overlap', 'ghosts', 'interactions', 'lists', 'timeline', 'history'];
+    const tabs = ['blocklist', 'blocker', 'followers', 'overlap', 'ghosts', 'interactions', 'lists', 'timeline', 'history'];
     
     tabs.forEach(t => {
         const btnName = 'tabBtn' + t.charAt(0).toUpperCase() + t.slice(1);
@@ -2096,9 +2144,11 @@ function switchTab(tabId) {
         if (state.authorPosts.length === 0) {
             fetchMyRecentPosts();
         }
-    } else if (tabId === 'lists') {
+    } else if (tabId === 'blocker' || tabId === 'lists') {
         if (state.userLists.length === 0) {
             fetchMyLists();
+        } else if (tabId === 'blocker') {
+            populateBlockerListsDropdown();
         }
     } else if (tabId === 'timeline') {
         if (state.timelineActors.length === 0) {
@@ -5048,9 +5098,11 @@ async function fetchMyLists() {
             DOM.selectUserListsSecondary.appendChild(opt2);
         });
         
+        populateBlockerListsDropdown();
     } catch (err) {
         log(`Fehler beim Laden deiner Listen: ${getErrorMessage(err)}`, 'warning');
         DOM.selectUserListsPrimary.innerHTML = '<option value="" disabled>Fehler beim Laden</option>';
+        populateBlockerListsDropdown();
     }
 }
 
@@ -6317,11 +6369,1001 @@ async function startTimelineMuteFlow() {
     renderTimelineActors();
 }
 
+// --- BLOCKER FEATURE LOGIC ---
+
+function parsePostUrl(url) {
+    try {
+        const cleanUrl = url.trim().split('?')[0];
+        const match = cleanUrl.match(/\/profile\/([^/]+)\/post\/([^/]+)/);
+        if (!match) return null;
+        return {
+            actor: decodeURIComponent(match[1]),
+            rkey: decodeURIComponent(match[2])
+        };
+    } catch (e) {
+        return null;
+    }
+}
+
+async function blockSingleUser() {
+    const actor = DOM.blockerSingleIdentifier.value.trim();
+    if (!actor) {
+        showBlockerSingleError('Bitte gib einen Handle oder DID ein.');
+        return;
+    }
+    
+    hideBlockerSingleError();
+    DOM.btnBlockerSingleBlock.disabled = true;
+    
+    try {
+        if (!state.session) {
+            throw new Error('Du musst eingeloggt sein.');
+        }
+        
+        const isMock = state.session.did === 'did:plc:testuser123';
+        const targetDid = isMock 
+            ? (actor === 'protected-user.bsky.social' || actor === 'did:plc:protected1' ? 'did:plc:protected1' : 'did:plc:singleuser123') 
+            : await resolveHandleOrDid(actor);
+        const targetHandle = isMock ? actor : (actor.startsWith('did:') ? targetDid : actor);
+        
+        // Strict mutual check
+        const isMutual = isMock 
+            ? (targetDid === 'did:plc:protected1')
+            : (state.myFollows.has(targetDid) && state.myFollowers.has(targetDid));
+            
+        if (isMutual) {
+            throw new Error('Dieser Account ist ein Mutual (Gegenseitiges Abonnement) und kann nicht blockiert werden.');
+        }
+        
+        if (!confirm(`Bist du sicher, dass du @${targetHandle} blockieren möchtest?`)) {
+            DOM.btnBlockerSingleBlock.disabled = false;
+            return;
+        }
+        
+        log(`Blockiere @${targetHandle}...`, 'info');
+        
+        if (isMock || state.isDryRun) {
+            await new Promise(resolve => setTimeout(resolve, 500));
+            log(`${isMock ? '[Mock]' : '[Dry-Run]'} Blockiert: @${targetHandle}`, 'success');
+        } else {
+            await apiFetch(`${state.session.serverUrl}/xrpc/com.atproto.repo.createRecord`, {
+                method: 'POST',
+                body: JSON.stringify({
+                    repo: state.session.did,
+                    collection: 'app.bsky.graph.block',
+                    record: {
+                        $type: 'app.bsky.graph.block',
+                        subject: targetDid,
+                        createdAt: new Date().toISOString()
+                    }
+                })
+            });
+            log(`Erfolgreich blockiert: @${targetHandle}`, 'success');
+            
+            // Add to history
+            addActionToHistory('block', `Einzelner Block: @${targetHandle}`, [{ did: targetDid, handle: targetHandle }]);
+        }
+        
+        DOM.blockerSingleIdentifier.value = '';
+        alert(`@${targetHandle} wurde erfolgreich blockiert.`);
+    } catch (err) {
+        const errMsg = getErrorMessage(err);
+        showBlockerSingleError(`Fehler beim Blockieren: ${errMsg}`);
+        log(`Fehler beim Blockieren von @${actor}: ${errMsg}`, 'error');
+    } finally {
+        DOM.btnBlockerSingleBlock.disabled = false;
+    }
+}
+
+function showBlockerSingleError(msg) {
+    DOM.blockerSingleError.textContent = msg;
+    DOM.blockerSingleError.classList.remove('hidden');
+}
+
+function hideBlockerSingleError() {
+    DOM.blockerSingleError.textContent = '';
+    DOM.blockerSingleError.classList.add('hidden');
+}
+
+async function enrichBlockerWithProfiles(candidates) {
+    if (candidates.length === 0) return;
+    
+    if (state.session && state.session.did === 'did:plc:testuser123') {
+        const mockProfilesDetail = [
+            { did: 'did:plc:protected1', description: 'Software developer and retro computing enthusiast. Protect me!', postsCount: 150, followersCount: 1200, followsCount: 800 },
+            { did: 'did:plc:regular3', description: 'Just posting random stuff. Sarcasm included.', postsCount: 5, followersCount: 10, followsCount: 50 },
+            { did: 'did:plc:target1', description: 'Official account of Target Following.', postsCount: 4200, followersCount: 99000, followsCount: 1500 },
+            { did: 'did:plc:target2', description: 'Follower profile test.', postsCount: 12, followersCount: 5, followsCount: 100 },
+            { did: 'did:plc:target3', description: '', postsCount: 0, followersCount: 0, followsCount: 2500 },
+            { did: 'did:plc:target4', description: 'Inactive account.', postsCount: 0, followersCount: 3, followsCount: 9 },
+            { did: 'did:plc:liker1', description: 'Just someone who likes stuff.', postsCount: 89, followersCount: 200, followsCount: 120 },
+            { did: 'did:plc:liker2', description: 'Another post liker.', postsCount: 0, followersCount: 12, followsCount: 300 }
+        ];
+        
+        mockProfilesDetail.forEach(p => {
+            state.detailedProfilesMap.set(p.did, p);
+        });
+        
+        renderBlockerCandidates();
+        return;
+    }
+    
+    const dids = candidates.map(f => f.did);
+    log(`Lade Details für ${dids.length} Blocker-Kandidaten-Profile...`, 'info');
+    try {
+        const profiles = await fetchDetailedProfiles(dids);
+        profiles.forEach(p => {
+            state.detailedProfilesMap.set(p.did, {
+                did: p.did,
+                description: p.description || '',
+                postsCount: p.postsCount || 0,
+                followersCount: p.followersCount || 0,
+                followsCount: p.followsCount || 0
+            });
+        });
+        log(`Details für ${profiles.length} Blocker-Kandidaten-Profile geladen.`, 'success');
+        renderBlockerCandidates();
+    } catch (err) {
+        log(`Warnung beim Laden der Blocker-Kandidaten-Profildetails: ${getErrorMessage(err)}`, 'warning');
+    }
+}
+
+async function fetchBlockerFollowers(append = false) {
+    const target = DOM.blockerFollowersIdentifier.value.trim();
+    if (!target) return;
+    
+    if (!append) {
+        state.blockerCandidates = [];
+        state.blockerCursor = '';
+        state.blockerSource = 'followers';
+        state.blockerSourceTarget = target;
+        DOM.blockerListGrid.innerHTML = '';
+        DOM.btnBlockerFollowersLoad.disabled = true;
+        DOM.btnBlockerFollowersLoad.querySelector('span').classList.add('hidden');
+        DOM.btnBlockerFollowersLoad.querySelector('.spinner').classList.remove('hidden');
+        DOM.loadingBlocker.classList.remove('hidden');
+        DOM.emptyBlocker.classList.add('hidden');
+        DOM.blockerListGrid.classList.add('hidden');
+        DOM.btnBlockerLoadMore.classList.add('hidden');
+        DOM.btnBlockerLoadAll.classList.add('hidden');
+    }
+    
+    if (state.session && state.session.did === 'did:plc:testuser123') {
+        await new Promise(resolve => setTimeout(resolve, 800));
+        
+        const mockFollowers = [
+            { did: 'did:plc:protected1', handle: 'protected-user.bsky.social', displayName: 'Protected Account 🛡️', avatar: '' },
+            { did: 'did:plc:regular3', handle: 'regular-troll.bsky.social', displayName: 'Regular Troll', avatar: '' },
+            { did: 'did:plc:target1', handle: 'target-following.bsky.social', displayName: 'Target Following', avatar: '' },
+            { did: 'did:plc:target2', handle: 'target-follower.bsky.social', displayName: 'Target Follower', avatar: '' },
+            { did: 'did:plc:target3', handle: 'target-none.bsky.social', displayName: 'Target None', avatar: '' },
+            { did: 'did:plc:target4', handle: 'target-none2.bsky.social', displayName: 'Target None 2', avatar: '' },
+            { did: 'did:plc:mutual1', handle: 'mutual-user.bsky.social', displayName: 'Mutual User 👥', avatar: '' }
+        ];
+        
+        const blockedDids = new Set(state.blockedUsers.filter(u => u.status !== 'unblocked').map(u => u.did));
+        
+        mockFollowers.forEach(f => {
+            let relation = 'none';
+            if (blockedDids.has(f.did)) {
+                relation = 'blocked';
+            } else if (state.myFollows.has(f.did) && state.myFollowers.has(f.did)) {
+                relation = 'mutual';
+            } else if (state.myFollows.has(f.did)) {
+                relation = 'following';
+            } else if (state.myFollowers.has(f.did)) {
+                relation = 'follower';
+            }
+            
+            if (!state.blockerCandidates.some(existing => existing.did === f.did)) {
+                state.blockerCandidates.push({
+                    did: f.did,
+                    handle: f.handle,
+                    displayName: f.displayName || f.handle,
+                    avatar: f.avatar || '',
+                    relation: relation,
+                    status: 'idle',
+                    selected: relation !== 'blocked' && relation !== 'mutual'
+                });
+            }
+        });
+        
+        await enrichBlockerWithProfiles(state.blockerCandidates);
+        updateBlockerStats();
+        renderBlockerCandidates();
+        
+        DOM.btnBlockerFollowersLoad.disabled = false;
+        DOM.btnBlockerFollowersLoad.querySelector('span').classList.remove('hidden');
+        DOM.btnBlockerFollowersLoad.querySelector('.spinner').classList.add('hidden');
+        DOM.loadingBlocker.classList.add('hidden');
+        log(`Mock-Follower für @${target} erfolgreich geladen.`, 'success');
+        return;
+    }
+    
+    log(`Hole Follower von @${target}...`, 'system');
+    try {
+        let url = `${state.session.serverUrl}/xrpc/app.bsky.graph.getFollowers?actor=${encodeURIComponent(target)}&limit=100`;
+        if (state.blockerCursor) {
+            url += `&cursor=${encodeURIComponent(state.blockerCursor)}`;
+        }
+        
+        const data = await apiFetch(url);
+        const followers = data.followers || [];
+        state.blockerCursor = data.cursor || '';
+        
+        log(`Es wurden ${followers.length} Follower von @${target} geladen.`, 'info');
+        
+        const blockedDids = new Set(state.blockedUsers.filter(u => u.status !== 'unblocked').map(u => u.did));
+        const newItems = [];
+        
+        followers.forEach(f => {
+            let relation = 'none';
+            if (blockedDids.has(f.did)) {
+                relation = 'blocked';
+            } else if (state.myFollows.has(f.did) && state.myFollowers.has(f.did)) {
+                relation = 'mutual';
+            } else if (state.myFollows.has(f.did)) {
+                relation = 'following';
+            } else if (state.myFollowers.has(f.did)) {
+                relation = 'follower';
+            }
+            
+            if (!state.blockerCandidates.some(existing => existing.did === f.did)) {
+                const item = {
+                    did: f.did,
+                    handle: f.handle,
+                    displayName: f.displayName || f.handle,
+                    avatar: f.avatar || '',
+                    relation: relation,
+                    status: 'idle',
+                    selected: relation !== 'blocked' && relation !== 'mutual'
+                };
+                state.blockerCandidates.push(item);
+                newItems.push(item);
+            }
+        });
+        
+        updateBlockerStats();
+        renderBlockerCandidates();
+        
+        if (newItems.length > 0) {
+            await enrichBlockerWithProfiles(newItems);
+        }
+        
+        if (state.blockerCursor) {
+            DOM.btnBlockerLoadMore.classList.remove('hidden');
+            DOM.btnBlockerLoadAll.classList.remove('hidden');
+        } else {
+            DOM.btnBlockerLoadMore.classList.add('hidden');
+            DOM.btnBlockerLoadAll.classList.add('hidden');
+        }
+    } catch (err) {
+        log(`Fehler beim Laden der Follower: ${getErrorMessage(err)}`, 'error');
+        alert(`Fehler: ${getErrorMessage(err)}`);
+    } finally {
+        DOM.btnBlockerFollowersLoad.disabled = false;
+        DOM.btnBlockerFollowersLoad.querySelector('span').classList.remove('hidden');
+        DOM.btnBlockerFollowersLoad.querySelector('.spinner').classList.add('hidden');
+        DOM.loadingBlocker.classList.add('hidden');
+    }
+}
+
+async function fetchBlockerLikers(append = false) {
+    const url = DOM.blockerPostUrl.value.trim();
+    if (!url) return;
+    
+    if (!append) {
+        state.blockerCandidates = [];
+        state.blockerCursor = '';
+        state.blockerSource = 'likes';
+        state.blockerSourceTarget = url;
+        DOM.blockerListGrid.innerHTML = '';
+        DOM.btnBlockerPostLoad.disabled = true;
+        DOM.btnBlockerPostLoad.querySelector('span').classList.add('hidden');
+        DOM.btnBlockerPostLoad.querySelector('.spinner').classList.remove('hidden');
+        DOM.loadingBlocker.classList.remove('hidden');
+        DOM.emptyBlocker.classList.add('hidden');
+        DOM.blockerListGrid.classList.add('hidden');
+        DOM.btnBlockerLoadMore.classList.add('hidden');
+        DOM.btnBlockerLoadAll.classList.add('hidden');
+    }
+    
+    if (state.session && state.session.did === 'did:plc:testuser123') {
+        await new Promise(resolve => setTimeout(resolve, 800));
+        
+        const mockLikers = [
+            { did: 'did:plc:protected1', handle: 'protected-user.bsky.social', displayName: 'Protected Account 🛡️', avatar: '' },
+            { did: 'did:plc:regular3', handle: 'regular-troll.bsky.social', displayName: 'Regular Troll', avatar: '' },
+            { did: 'did:plc:liker1', handle: 'active-liker.bsky.social', displayName: 'Active Liker', avatar: '' },
+            { did: 'did:plc:liker2', handle: 'silent-liker.bsky.social', displayName: 'Silent Liker', avatar: '' },
+            { did: 'did:plc:mutual1', handle: 'mutual-user.bsky.social', displayName: 'Mutual User 👥', avatar: '' }
+        ];
+        
+        const blockedDids = new Set(state.blockedUsers.filter(u => u.status !== 'unblocked').map(u => u.did));
+        
+        mockLikers.forEach(f => {
+            let relation = 'none';
+            if (blockedDids.has(f.did)) {
+                relation = 'blocked';
+            } else if (state.myFollows.has(f.did) && state.myFollowers.has(f.did)) {
+                relation = 'mutual';
+            } else if (state.myFollows.has(f.did)) {
+                relation = 'following';
+            } else if (state.myFollowers.has(f.did)) {
+                relation = 'follower';
+            }
+            
+            if (!state.blockerCandidates.some(existing => existing.did === f.did)) {
+                state.blockerCandidates.push({
+                    did: f.did,
+                    handle: f.handle,
+                    displayName: f.displayName || f.handle,
+                    avatar: f.avatar || '',
+                    relation: relation,
+                    status: 'idle',
+                    selected: relation !== 'blocked' && relation !== 'mutual'
+                });
+            }
+        });
+        
+        await enrichBlockerWithProfiles(state.blockerCandidates);
+        updateBlockerStats();
+        renderBlockerCandidates();
+        
+        DOM.btnBlockerPostLoad.disabled = false;
+        DOM.btnBlockerPostLoad.querySelector('span').classList.remove('hidden');
+        DOM.btnBlockerPostLoad.querySelector('.spinner').classList.add('hidden');
+        DOM.loadingBlocker.classList.add('hidden');
+        log(`Mock-Liker für Beitrag erfolgreich geladen.`, 'success');
+        return;
+    }
+    
+    const parsed = parsePostUrl(url);
+    if (!parsed) {
+        alert('Ungültiges Post-URL-Format. Erwartetes Format: https://bsky.app/profile/name/post/rkey');
+        DOM.btnBlockerPostLoad.disabled = false;
+        DOM.btnBlockerPostLoad.querySelector('span').classList.remove('hidden');
+        DOM.btnBlockerPostLoad.querySelector('.spinner').classList.add('hidden');
+        DOM.loadingBlocker.classList.add('hidden');
+        return;
+    }
+    
+    try {
+        const did = await resolveHandleOrDid(parsed.actor);
+        const postUri = `at://${did}/app.bsky.feed.post/${parsed.rkey}`;
+        
+        log(`Lade Liker für Beitrag ${postUri}...`, 'system');
+        let fetchUrl = `${state.session.serverUrl}/xrpc/app.bsky.feed.getLikes?uri=${encodeURIComponent(postUri)}&limit=100`;
+        if (state.blockerCursor) {
+            fetchUrl += `&cursor=${encodeURIComponent(state.blockerCursor)}`;
+        }
+        
+        const data = await apiFetch(fetchUrl);
+        const likes = data.likes || [];
+        state.blockerCursor = data.cursor || '';
+        
+        log(`Es wurden ${likes.length} Liker geladen.`, 'info');
+        
+        const blockedDids = new Set(state.blockedUsers.filter(u => u.status !== 'unblocked').map(u => u.did));
+        const newItems = [];
+        
+        likes.forEach(like => {
+            const f = like.actor;
+            if (!f) return;
+            
+            let relation = 'none';
+            if (blockedDids.has(f.did)) {
+                relation = 'blocked';
+            } else if (state.myFollows.has(f.did) && state.myFollowers.has(f.did)) {
+                relation = 'mutual';
+            } else if (state.myFollows.has(f.did)) {
+                relation = 'following';
+            } else if (state.myFollowers.has(f.did)) {
+                relation = 'follower';
+            }
+            
+            if (!state.blockerCandidates.some(existing => existing.did === f.did)) {
+                const item = {
+                    did: f.did,
+                    handle: f.handle,
+                    displayName: f.displayName || f.handle,
+                    avatar: f.avatar || '',
+                    relation: relation,
+                    status: 'idle',
+                    selected: relation !== 'blocked' && relation !== 'mutual'
+                };
+                state.blockerCandidates.push(item);
+                newItems.push(item);
+            }
+        });
+        
+        updateBlockerStats();
+        renderBlockerCandidates();
+        
+        if (newItems.length > 0) {
+            await enrichBlockerWithProfiles(newItems);
+        }
+        
+        if (state.blockerCursor) {
+            DOM.btnBlockerLoadMore.classList.remove('hidden');
+            DOM.btnBlockerLoadAll.classList.remove('hidden');
+        } else {
+            DOM.btnBlockerLoadMore.classList.add('hidden');
+            DOM.btnBlockerLoadAll.classList.add('hidden');
+        }
+    } catch (err) {
+        log(`Fehler beim Laden der Liker: ${getErrorMessage(err)}`, 'error');
+        alert(`Fehler: ${getErrorMessage(err)}`);
+    } finally {
+        DOM.btnBlockerPostLoad.disabled = false;
+        DOM.btnBlockerPostLoad.querySelector('span').classList.remove('hidden');
+        DOM.btnBlockerPostLoad.querySelector('.spinner').classList.add('hidden');
+        DOM.loadingBlocker.classList.add('hidden');
+    }
+}
+
+async function loadMoreBlockerCandidates() {
+    if (state.isBlockerFetching) return;
+    state.isBlockerFetching = true;
+    
+    if (state.blockerSource === 'followers') {
+        await fetchBlockerFollowers(true);
+    } else if (state.blockerSource === 'likes') {
+        await fetchBlockerLikers(true);
+    }
+    state.isBlockerFetching = false;
+}
+
+async function loadAllBlockerCandidates() {
+    if (state.isBlockerFetching) return;
+    state.isBlockerFetching = true;
+    
+    log('Lade alle verbleibenden Kandidaten... Dies kann einen Moment dauern.', 'system');
+    
+    let count = 0;
+    while (state.blockerCursor && count < 10) {
+        if (state.blockerSource === 'followers') {
+            await fetchBlockerFollowers(true);
+        } else if (state.blockerSource === 'likes') {
+            await fetchBlockerLikers(true);
+        }
+        count++;
+        await new Promise(resolve => setTimeout(resolve, 300));
+    }
+    
+    log('Alle verfügbaren Kandidaten geladen.', 'success');
+    state.isBlockerFetching = false;
+}
+
+function renderBlockerCandidates() {
+    DOM.blockerListGrid.innerHTML = '';
+    
+    DOM.blockerVisibleCountBadge.textContent = `${state.blockerCandidates.length} geladen`;
+    
+    if (state.blockerCandidates.length === 0) {
+        DOM.blockerListGrid.classList.add('hidden');
+        DOM.emptyBlocker.classList.remove('hidden');
+        return;
+    }
+    
+    DOM.emptyBlocker.classList.add('hidden');
+    DOM.blockerListGrid.classList.remove('hidden');
+    
+    state.blockerCandidates.forEach(user => {
+        const card = document.createElement('div');
+        
+        let statusClass = user.status;
+        if (user.status === 'blocked') statusClass = 'error';
+        card.className = `block-item fade-in ${statusClass}`;
+        card.id = `blocker-card-${user.did.replace(':', '_')}`;
+        
+        let relationLabel = 'Keine';
+        let badgeClass = 'block-status-badge none';
+        
+        if (user.relation === 'blocked') {
+            relationLabel = 'Bereits blockiert';
+            badgeClass = 'block-status-badge blocked';
+        } else if (user.relation === 'mutual') {
+            relationLabel = 'Mutual (Geschützt)';
+            badgeClass = 'block-status-badge mutual';
+        } else if (user.relation === 'following') {
+            relationLabel = 'Folge ich';
+            badgeClass = 'block-status-badge following';
+        } else if (user.relation === 'follower') {
+            relationLabel = 'Folgt mir';
+            badgeClass = 'block-status-badge follower';
+        }
+        
+        if (user.status === 'processing') {
+            relationLabel = 'Blockiere...';
+            badgeClass = 'block-status-badge processing';
+        } else if (user.status === 'blocked') {
+            relationLabel = 'Blockiert ✓';
+            badgeClass = 'block-status-badge blocked';
+        } else if (user.status === 'error') {
+            relationLabel = 'Fehler';
+            badgeClass = 'block-status-badge error';
+        }
+        
+        const avatarSrc = user.avatar || '';
+        const avatarEl = avatarSrc 
+            ? `<img src="${avatarSrc}" alt="Avatar" class="block-avatar" onerror="this.src=''; this.className='avatar-placeholder'">`
+            : `<div class="block-avatar avatar-placeholder"></div>`;
+            
+        let isInteractive = user.status !== 'blocked' && user.relation !== 'blocked' && user.relation !== 'mutual' && !state.isBlockerProcessing;
+        const disabledAttr = isInteractive ? '' : 'disabled';
+        
+        const details = state.detailedProfilesMap.get(user.did);
+        let bioHtml = '';
+        let statsHtml = '';
+        let qualityBadgeHtml = '';
+        
+        if (details) {
+            const isBot = (details.postsCount === 0 && !user.avatar && !details.description) || 
+                          (details.followsCount > 500 && details.followersCount < 50 && (details.followsCount / Math.max(1, details.followersCount)) > 5);
+            if (isBot) {
+                qualityBadgeHtml = `<span class="block-status-badge spambot" title="Verdacht auf Spam-Bot">⚠️ Bot?</span>`;
+            } else if (details.postsCount === 0) {
+                qualityBadgeHtml = `<span class="block-status-badge inactive" title="Inaktiver Account (0 Posts)">💤 Inaktiv</span>`;
+            }
+            
+            if (details.description) {
+                bioHtml = `<div class="follower-bio" title="${details.description}">${details.description}</div>`;
+            }
+            statsHtml = `
+                <div class="follower-stats">
+                    <span>📝 ${details.postsCount} Posts</span>
+                    <span>👤 ${details.followersCount} Follower</span>
+                </div>
+            `;
+        }
+        
+        card.innerHTML = `
+            <label class="checkbox-container">
+                <input type="checkbox" ${user.selected && isInteractive ? 'checked' : ''} ${disabledAttr} data-did="${user.did}">
+                <span class="checkmark"></span>
+            </label>
+            ${avatarEl}
+            <div class="follower-item-detail">
+                <div class="block-name" title="${user.displayName || user.handle}">${user.displayName || user.handle}</div>
+                <div class="block-handle">
+                    <a href="https://bsky.app/profile/${user.handle}" target="_blank" rel="noopener noreferrer">@${user.handle}</a>
+                </div>
+                ${bioHtml}
+                ${statsHtml}
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px; flex-direction: column; justify-content: center; flex-shrink: 0;">
+                <span class="${badgeClass}">${relationLabel}</span>
+                ${qualityBadgeHtml}
+            </div>
+        `;
+        
+        const cb = card.querySelector('input[type="checkbox"]');
+        if (cb) {
+            cb.addEventListener('change', () => {
+                user.selected = cb.checked;
+                updateBlockerStats();
+            });
+        }
+        
+        DOM.blockerListGrid.appendChild(card);
+    });
+}
+
+function updateBlockerStats() {
+    const loaded = state.blockerCandidates.length;
+    const selected = state.blockerCandidates.filter(u => u.selected && u.status !== 'blocked' && u.relation !== 'blocked' && u.relation !== 'mutual').length;
+    const success = state.blockerCandidates.filter(u => u.status === 'blocked').length;
+    const error = state.blockerCandidates.filter(u => u.status === 'error').length;
+    
+    DOM.statBlockerLoaded.textContent = loaded;
+    DOM.statBlockerSelected.textContent = selected;
+    DOM.statBlockerSuccess.textContent = success;
+    DOM.statBlockerError.textContent = error;
+    
+    const hasSelectable = state.blockerCandidates.some(u => u.status !== 'blocked' && u.relation !== 'blocked' && u.relation !== 'mutual');
+    DOM.btnBlockerSelectAll.disabled = !hasSelectable || state.isBlockerProcessing;
+    DOM.btnBlockerDeselectAll.disabled = !hasSelectable || state.isBlockerProcessing;
+    DOM.btnBlockerBlockSelected.disabled = selected === 0 || state.isBlockerProcessing;
+    DOM.btnBlockerBlockAll.disabled = !hasSelectable || state.isBlockerProcessing;
+}
+
+function startBlockerFlow(users) {
+    state.blockerQueue = users.map(u => u.did);
+    state.blockerRunTotal = users.length;
+    state.isBlockerProcessing = true;
+    state.isBlockerPaused = false;
+    
+    DOM.blockerProgressContainer.classList.remove('hidden');
+    DOM.blockerExecutionControls.classList.remove('hidden');
+    DOM.btnBlockerPause.classList.remove('hidden');
+    DOM.btnBlockerResume.classList.add('hidden');
+    DOM.btnBlockerCancel.disabled = false;
+    
+    DOM.btnBlockerSingleBlock.disabled = true;
+    DOM.btnBlockerFollowersLoad.disabled = true;
+    DOM.btnBlockerPostLoad.disabled = true;
+    DOM.btnBlockerSelectAll.disabled = true;
+    DOM.btnBlockerDeselectAll.disabled = true;
+    DOM.btnBlockerBlockSelected.disabled = true;
+    DOM.btnBlockerBlockAll.disabled = true;
+    
+    log(`Starte das Massen-Blockieren für ${state.blockerQueue.length} Accounts...`, 'system');
+    updateBlockerStats();
+    renderBlockerCandidates();
+    
+    processBlockerQueue();
+}
+
+async function processBlockerQueue() {
+    const CONCURRENCY = 4;
+    const THROTTLE_DELAY = 100;
+    const workers = [];
+    
+    const worker = async () => {
+        while (state.blockerQueue.length > 0 && state.isBlockerProcessing && !state.isBlockerPaused) {
+            const currentDid = state.blockerQueue.shift();
+            if (!currentDid) continue;
+            
+            const user = state.blockerCandidates.find(u => u.did === currentDid);
+            if (!user) continue;
+            
+            if (user.relation === 'mutual') {
+                log(`Massen-Block: Überspringe gegenseitiges Abonnement (Mutual): @${user.handle}`, 'warning');
+                user.status = 'idle';
+                user.selected = false;
+                renderBlockerCandidates();
+                updateBlockerProgress();
+                updateBlockerStats();
+                continue;
+            }
+            
+            user.status = 'processing';
+            renderBlockerCandidates();
+            updateBlockerProgress();
+            
+            try {
+                await new Promise(resolve => setTimeout(resolve, THROTTLE_DELAY));
+                
+                if (!state.isBlockerProcessing || state.isBlockerPaused) {
+                    state.blockerQueue.unshift(currentDid);
+                    user.status = 'idle';
+                    renderBlockerCandidates();
+                    updateBlockerProgress();
+                    break;
+                }
+                
+                if (state.isDryRun || (state.session && state.session.did === 'did:plc:testuser123')) {
+                    const isMock = state.session && state.session.did === 'did:plc:testuser123';
+                    log(`${isMock ? '[Mock]' : '[Dry-Run]'} Würde @${user.handle} blockieren.`, 'success');
+                    if (isMock) {
+                        await new Promise(resolve => setTimeout(resolve, 300));
+                    }
+                    user.status = 'blocked';
+                    user.selected = false;
+                } else {
+                    log(`Blockiere @${user.handle}...`, 'info');
+                    await apiFetch(`${state.session.serverUrl}/xrpc/com.atproto.repo.createRecord`, {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            repo: state.session.did,
+                            collection: 'app.bsky.graph.block',
+                            record: {
+                                $type: 'app.bsky.graph.block',
+                                subject: currentDid,
+                                createdAt: new Date().toISOString()
+                            }
+                        })
+                    });
+                    
+                    user.status = 'blocked';
+                    user.selected = false;
+                    log(`Erfolgreich blockiert: @${user.handle}`, 'success');
+                }
+            } catch (err) {
+                user.status = 'error';
+                log(`Fehler beim Blockieren von @${user.handle}: ${getErrorMessage(err)}`, 'error');
+            }
+            
+            renderBlockerCandidates();
+            updateBlockerProgress();
+            updateBlockerStats();
+        }
+    };
+    
+    for (let i = 0; i < Math.min(CONCURRENCY, state.blockerQueue.length); i++) {
+        workers.push(worker());
+    }
+    
+    await Promise.all(workers);
+    
+    if (state.blockerQueue.length === 0 && state.isBlockerProcessing && !state.isBlockerPaused) {
+        log('Blockier-Aktionen abgeschlossen!', 'success');
+        
+        const blockedUsers = state.blockerCandidates.filter(u => u.status === 'blocked');
+        if (blockedUsers.length > 0) {
+            const targets = blockedUsers.map(u => ({ did: u.did, handle: u.handle }));
+            addActionToHistory('block', `Massen-Block: ${blockedUsers.length} Accounts blockiert`, targets);
+        }
+        
+        state.isBlockerProcessing = false;
+        
+        DOM.blockerProgressContainer.classList.add('hidden');
+        DOM.blockerExecutionControls.classList.add('hidden');
+        
+        DOM.btnBlockerSingleBlock.disabled = false;
+        DOM.btnBlockerFollowersLoad.disabled = false;
+        DOM.btnBlockerPostLoad.disabled = false;
+        
+        updateBlockerStats();
+        alert('Massen-Blockier-Vorgang abgeschlossen.');
+    }
+}
+
+function updateBlockerProgress() {
+    if (state.blockerRunTotal === 0) return;
+    const processed = state.blockerRunTotal - state.blockerQueue.length;
+    const pct = Math.round((processed / state.blockerRunTotal) * 100);
+    DOM.blockerProgressBar.style.width = `${pct}%`;
+    DOM.blockerProgressText.textContent = `Fortschritt: ${processed} / ${state.blockerRunTotal} verarbeitet (${pct}%)`;
+}
+
+function pauseBlockerFlow() {
+    if (!state.isBlockerProcessing || state.isBlockerPaused) return;
+    state.isBlockerPaused = true;
+    DOM.btnBlockerPause.classList.add('hidden');
+    DOM.btnBlockerResume.classList.remove('hidden');
+    log('Blockier-Vorgang pausiert.', 'warning');
+}
+
+function resumeBlockerFlow() {
+    if (!state.isBlockerProcessing || !state.isBlockerPaused) return;
+    state.isBlockerPaused = false;
+    DOM.btnBlockerPause.classList.remove('hidden');
+    DOM.btnBlockerResume.classList.add('hidden');
+    log('Blockier-Vorgang fortgesetzt...', 'info');
+    processBlockerQueue();
+}
+
+function cancelBlockerFlow() {
+    if (!state.isBlockerProcessing) return;
+    state.isBlockerProcessing = false;
+    state.isBlockerPaused = false;
+    state.blockerQueue = [];
+    DOM.blockerProgressContainer.classList.add('hidden');
+    DOM.blockerExecutionControls.classList.add('hidden');
+    
+    DOM.btnBlockerSingleBlock.disabled = false;
+    DOM.btnBlockerFollowersLoad.disabled = false;
+    DOM.btnBlockerPostLoad.disabled = false;
+    
+    log('Blockier-Vorgang abgebrochen.', 'error');
+    updateBlockerStats();
+}
+
+function populateBlockerListsDropdown() {
+    if (!DOM.blockerListSelect) return;
+    DOM.blockerListSelect.innerHTML = '';
+    
+    if (state.userLists.length === 0) {
+        DOM.blockerListSelect.innerHTML = '<option value="" disabled>Keine Listen gefunden</option>';
+        return;
+    }
+    
+    state.userLists.forEach(l => {
+        const opt = document.createElement('option');
+        opt.value = l.uri;
+        opt.textContent = l.name;
+        DOM.blockerListSelect.appendChild(opt);
+    });
+}
+
+async function addBlockerCandidatesToList(existingListUri = null, newListName = null) {
+    const listToExport = state.blockerCandidates.filter(u => u.status !== 'blocked');
+    if (listToExport.length === 0) {
+        alert('Keine Kandidaten zum Hinzufügen geladen!');
+        return;
+    }
+    
+    let listUri = existingListUri;
+    
+    try {
+        if (newListName) {
+            log(`Erstelle Liste "${newListName}" auf Bluesky...`, 'system');
+            if (state.isDryRun || (state.session && state.session.did === 'did:plc:testuser123')) {
+                const isMock = state.session && state.session.did === 'did:plc:testuser123';
+                log(`${isMock ? '[Mock]' : '[Dry-Run]'} Liste "${newListName}" erstellt.`, 'success');
+                alert(`Liste "${newListName}" erfolgreich erstellt.`);
+                
+                // Mock add to state
+                const mockListUri = `at://${state.session.did}/app.bsky.graph.list/mocklist_${Date.now()}`;
+                state.userLists.push({
+                    uri: mockListUri,
+                    rkey: mockListUri.split('/').pop(),
+                    name: newListName,
+                    purpose: 'app.bsky.graph.defs#curatelist',
+                    description: 'Erstellt mit C.T.H.U.L.H.U.'
+                });
+                populateBlockerListsDropdown();
+                DOM.blockerListSelect.value = mockListUri;
+                DOM.blockerListNewName.value = '';
+                return;
+            }
+            
+            const createListRes = await apiFetch(`${state.session.serverUrl}/xrpc/com.atproto.repo.createRecord`, {
+                method: 'POST',
+                body: JSON.stringify({
+                    repo: state.session.did,
+                    collection: 'app.bsky.graph.list',
+                    record: {
+                        $type: 'app.bsky.graph.list',
+                        name: newListName,
+                        purpose: 'app.bsky.graph.defs#curatelist',
+                        description: 'Erstellt mit C.T.H.U.L.H.U.',
+                        createdAt: new Date().toISOString()
+                    }
+                })
+            });
+            listUri = createListRes.uri;
+            log(`Liste erstellt: ${listUri}`, 'success');
+            
+            // Reload user lists
+            await fetchMyLists();
+            DOM.blockerListSelect.value = listUri;
+            DOM.blockerListNewName.value = '';
+        }
+        
+        if (!listUri) {
+            alert('Bitte wähle eine Liste aus oder gib einen Namen für eine neue Liste ein.');
+            return;
+        }
+        
+        const selectedList = state.userLists.find(l => l.uri === listUri);
+        const displayName = selectedList ? selectedList.name : 'Liste';
+        
+        log(`Füge ${listToExport.length} Kandidaten zu "${displayName}" hinzu...`, 'info');
+        
+        if (state.isDryRun || (state.session && state.session.did === 'did:plc:testuser123')) {
+            const isMock = state.session && state.session.did === 'did:plc:testuser123';
+            log(`${isMock ? '[Mock]' : '[Dry-Run]'} Fügte ${listToExport.length} Kandidaten hinzu.`, 'success');
+            alert(`${listToExport.length} Kandidaten wurden zur Liste "${displayName}" hinzugefügt.`);
+            return;
+        }
+        
+        const CONCURRENCY = 4;
+        const THROTTLE_DELAY = 100;
+        const queue = [...listToExport];
+        const workers = [];
+        
+        const worker = async () => {
+            while (queue.length > 0) {
+                const user = queue.shift();
+                if (!user) continue;
+                
+                try {
+                    await new Promise(resolve => setTimeout(resolve, THROTTLE_DELAY));
+                    await apiFetch(`${state.session.serverUrl}/xrpc/com.atproto.repo.createRecord`, {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            repo: state.session.did,
+                            collection: 'app.bsky.graph.listitem',
+                            record: {
+                                $type: 'app.bsky.graph.listitem',
+                                subject: user.did,
+                                list: listUri,
+                                createdAt: new Date().toISOString()
+                            }
+                        })
+                    });
+                    log(`Kandidat hinzugefügt: @${user.handle}`, 'success');
+                } catch (err) {
+                    log(`Fehler bei @${user.handle} (Liste): ${getErrorMessage(err)}`, 'error');
+                }
+            }
+        };
+        
+        for (let i = 0; i < Math.min(CONCURRENCY, queue.length); i++) {
+            workers.push(worker());
+        }
+        
+        await Promise.all(workers);
+        log(`Hinzufügen zu Liste "${displayName}" abgeschlossen!`, 'success');
+        alert(`${listToExport.length} Kandidaten wurden zur Liste "${displayName}" hinzugefügt.`);
+        
+    } catch (err) {
+        log(`Fehler beim Listen-Vorgang: ${getErrorMessage(err)}`, 'error');
+        alert(`Fehler: ${getErrorMessage(err)}`);
+    }
+}
+
+function initBlockerTab() {
+    DOM.btnBlockerSingleBlock.addEventListener('click', blockSingleUser);
+    
+    DOM.btnBlockerFollowersLoad.addEventListener('click', async () => {
+        const target = DOM.blockerFollowersIdentifier.value.trim();
+        if (!target) {
+            alert('Bitte gib einen Handle oder DID ein.');
+            return;
+        }
+        await fetchBlockerFollowers(false);
+    });
+    
+    DOM.btnBlockerPostLoad.addEventListener('click', async () => {
+        const url = DOM.blockerPostUrl.value.trim();
+        if (!url) {
+            alert('Bitte gib eine Post-URL ein.');
+            return;
+        }
+        await fetchBlockerLikers(false);
+    });
+    
+    DOM.btnBlockerSelectAll.addEventListener('click', () => {
+        state.blockerCandidates.forEach(u => {
+            if (u.status !== 'blocked' && u.relation !== 'blocked' && u.relation !== 'mutual') {
+                u.selected = true;
+            }
+        });
+        updateBlockerStats();
+        renderBlockerCandidates();
+    });
+    
+    DOM.btnBlockerDeselectAll.addEventListener('click', () => {
+        state.blockerCandidates.forEach(u => u.selected = false);
+        updateBlockerStats();
+        renderBlockerCandidates();
+    });
+    
+    DOM.btnBlockerBlockSelected.addEventListener('click', () => {
+        const toBlock = state.blockerCandidates.filter(u => u.selected && u.status !== 'blocked' && u.relation !== 'blocked' && u.relation !== 'mutual');
+        if (toBlock.length === 0) return;
+        if (state.session && state.session.did !== 'did:plc:testuser123') {
+            if (!confirm(`Bist du sicher, dass du ${toBlock.length} Accounts blockieren möchtest?`)) return;
+        }
+        startBlockerFlow(toBlock);
+    });
+    
+    DOM.btnBlockerBlockAll.addEventListener('click', () => {
+        const toBlock = state.blockerCandidates.filter(u => u.status !== 'blocked' && u.relation !== 'blocked' && u.relation !== 'mutual');
+        if (toBlock.length === 0) return;
+        if (state.session && state.session.did !== 'did:plc:testuser123') {
+            if (!confirm(`Bist du sicher, dass du ALLE ${toBlock.length} geladenen Accounts blockieren möchtest?`)) return;
+        }
+        startBlockerFlow(toBlock);
+    });
+    
+    DOM.btnBlockerPause.addEventListener('click', pauseBlockerFlow);
+    DOM.btnBlockerResume.addEventListener('click', resumeBlockerFlow);
+    DOM.btnBlockerCancel.addEventListener('click', cancelBlockerFlow);
+    
+    DOM.btnBlockerLoadMore.addEventListener('click', loadMoreBlockerCandidates);
+    DOM.btnBlockerLoadAll.addEventListener('click', loadAllBlockerCandidates);
+
+    // List tool listeners
+    DOM.btnBlockerAddExistingList.addEventListener('click', () => {
+        const existingListUri = DOM.blockerListSelect.value;
+        if (!existingListUri) {
+            alert('Bitte wähle eine bestehende Liste aus.');
+            return;
+        }
+        addBlockerCandidatesToList(existingListUri, null);
+    });
+
+    DOM.btnBlockerCreateNewList.addEventListener('click', () => {
+        const newListName = DOM.blockerListNewName.value.trim();
+        if (!newListName) {
+            alert('Bitte gib einen Namen für die neue Liste ein.');
+            return;
+        }
+        addBlockerCandidatesToList(null, newListName);
+    });
+}
+
 // Initialize on page load
 loadSavedProfiles();
 initFollowerCopier();
 initWhitelistTab();
 initTimelineTab();
+initBlockerTab();
 loadActionHistory();
 
 // Test Mock Data for Visual verification
@@ -6379,8 +7421,8 @@ if (new URLSearchParams(window.location.search).has('test')) {
     ];
     
     // Mock follows and followers
-    state.myFollows = new Set(['did:plc:protected1', 'did:plc:regular3', 'did:plc:target1']);
-    state.myFollowers = new Set(['did:plc:regular3', 'did:plc:target2']);
+    state.myFollows = new Set(['did:plc:protected1', 'did:plc:regular3', 'did:plc:target1', 'did:plc:mutual1']);
+    state.myFollowers = new Set(['did:plc:regular3', 'did:plc:target2', 'did:plc:mutual1']);
     state.myFollowsRkeys = new Map([
         ['did:plc:protected1', 'rkey-follow-protected1'],
         ['did:plc:regular3', 'rkey-follow-regular3'],

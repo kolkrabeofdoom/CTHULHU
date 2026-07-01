@@ -1204,6 +1204,45 @@
         </footer>
     </div>
     
+    <!-- Custom List Import Modal -->
+    <div id="list-import-modal" class="modal-overlay hidden">
+        <div class="modal-content">
+            <h3 class="modal-title">Liste importieren</h3>
+            <p class="modal-description">Wie möchtest du die importierten Konten hinzufügen?</p>
+            
+            <div class="modal-options">
+                <label class="modal-option-label">
+                    <input type="radio" name="import-mode" id="import-mode-new" value="new" checked style="cursor: pointer;">
+                    <div class="option-details">
+                        <span class="option-title">Als neue Liste erstellen</span>
+                        <span class="option-desc">Erstellt eine neue Liste mit einem Wunschnamen auf deinem Profil.</span>
+                    </div>
+                </label>
+                <div id="import-new-name-container" class="form-group" style="margin-left: 28px; margin-top: 5px; margin-bottom: 15px;">
+                    <input type="text" id="import-new-list-name" placeholder="Name der neuen Liste..." style="width: 100%; padding: 8px 12px; background: rgba(15, 23, 42, 0.6); border: 1px solid var(--card-border); border-radius: var(--radius-sm); color: var(--text-primary);">
+                </div>
+
+                <label class="modal-option-label">
+                    <input type="radio" name="import-mode" id="import-mode-merge" value="merge" style="cursor: pointer;">
+                    <div class="option-details">
+                        <span class="option-title">In bestehende Liste einfügen (Merge)</span>
+                        <span class="option-desc">Fügt die Konten einer deiner vorhandenen Listen hinzu (Duplikate werden ignoriert).</span>
+                    </div>
+                </label>
+                <div id="import-existing-container" class="form-group hidden" style="margin-left: 28px; margin-top: 5px; margin-bottom: 15px;">
+                    <select id="import-existing-list-select" style="width: 100%; padding: 8px 12px; background: rgba(15, 23, 42, 0.6); border: 1px solid var(--card-border); border-radius: var(--radius-sm); color: var(--text-primary); cursor: pointer;">
+                        <!-- Populated dynamically -->
+                    </select>
+                </div>
+            </div>
+
+            <div class="modal-actions">
+                <button type="button" id="btn-modal-cancel" class="btn btn-secondary">Abbrechen</button>
+                <button type="button" id="btn-modal-confirm" class="btn btn-primary">Import starten</button>
+            </div>
+        </div>
+    </div>
+
     <script src="app.js"></script>
 </body>
 </html>

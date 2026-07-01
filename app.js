@@ -288,6 +288,15 @@ const DOM = {
     btnListsExportCsv: document.getElementById('btn-lists-export-csv'),
     btnListsImportBackup: document.getElementById('btn-lists-import-backup'),
     inputListsImportFile: document.getElementById('input-lists-import-file'),
+    listImportModal: document.getElementById('list-import-modal'),
+    importModeNew: document.getElementById('import-mode-new'),
+    importModeMerge: document.getElementById('import-mode-merge'),
+    importNewNameContainer: document.getElementById('import-new-name-container'),
+    importNewListName: document.getElementById('import-new-list-name'),
+    importExistingContainer: document.getElementById('import-existing-container'),
+    importExistingListSelect: document.getElementById('import-existing-list-select'),
+    btnModalCancel: document.getElementById('btn-modal-cancel'),
+    btnModalConfirm: document.getElementById('btn-modal-confirm'),
 
     // Tab buttons
     tabBtnTimeline: document.getElementById('tab-btn-timeline'),
@@ -5245,6 +5254,23 @@ function initListsTab() {
     DOM.btnListsExportCsv.addEventListener('click', exportListCSV);
     DOM.btnListsImportBackup.addEventListener('click', () => DOM.inputListsImportFile.click());
     DOM.inputListsImportFile.addEventListener('change', handleListImport);
+
+    // Modal Events
+    DOM.importModeNew.addEventListener('change', () => {
+        if (DOM.importModeNew.checked) {
+            DOM.importNewNameContainer.classList.remove('hidden');
+            DOM.importExistingContainer.classList.add('hidden');
+        }
+    });
+    DOM.importModeMerge.addEventListener('change', () => {
+        if (DOM.importModeMerge.checked) {
+            DOM.importNewNameContainer.classList.add('hidden');
+            DOM.importExistingContainer.classList.remove('hidden');
+        }
+    });
+    DOM.btnModalCancel.addEventListener('click', () => {
+        DOM.listImportModal.classList.add('hidden');
+    });
 }
 async function createStarterpackFromSelectedList() {
     const packName = DOM.inputStarterpackName.value.trim();
@@ -5846,67 +5872,174 @@ async function handleListImport(e) {
                 throw new Error('Keine gültigen Einträge mit auflösbaren DIDs vorhanden.');
             }
             
-            // Ask for new list name
+            // Populate Modal Options
+            DOM.importExistingListSelect.innerHTML = '';
+            const myOwnLists = state.userLists.filter(l => l.uri.includes(state.session.did));
+            if (myOwnLists.length === 0) {
+                DOM.importModeMerge.disabled = true;
+                const opt = document.createElement('option');
+                opt.value = "";
+                opt.textContent = "Keine eigenen Listen vorhanden";
+                DOM.importExistingListSelect.appendChild(opt);
+                // Ensure 'new' is checked if 'merge' is disabled
+                DOM.importModeNew.checked = true;
+                DOM.importNewNameContainer.classList.remove('hidden');
+                DOM.importExistingContainer.classList.add('hidden');
+            } else {
+                DOM.importModeMerge.disabled = false;
+                myOwnLists.forEach(l => {
+                    const opt = document.createElement('option');
+                    opt.value = l.uri;
+                    opt.textContent = l.name;
+                    DOM.importExistingListSelect.appendChild(opt);
+                });
+            }
+            
             const defaultListName = file.name.split('.')[0].replace(/-/g, ' ');
-            const listName = prompt('Gib einen Namen für die neu zu erstellende Liste auf deinem Account ein:', defaultListName || 'Importierte Liste');
-            if (!listName) {
+            DOM.importNewListName.value = defaultListName || 'Importierte Liste';
+            
+            // Show Modal and wait for confirm/cancel
+            const result = await new Promise((resolve) => {
+                const onConfirm = () => {
+                    const mode = DOM.importModeNew.checked ? 'new' : 'merge';
+                    if (mode === 'new') {
+                        const newName = DOM.importNewListName.value.trim();
+                        if (!newName) {
+                            alert('Bitte gib einen Namen für die neue Liste ein!');
+                            return;
+                        }
+                        cleanup();
+                        resolve({ mode: 'new', name: newName });
+                    } else {
+                        const listUri = DOM.importExistingListSelect.value;
+                        if (!listUri) {
+                            alert('Bitte wähle eine Liste aus!');
+                            return;
+                        }
+                        cleanup();
+                        resolve({ mode: 'merge', uri: listUri });
+                    }
+                };
+                
+                const onCancel = () => {
+                    cleanup();
+                    resolve(null);
+                };
+                
+                const cleanup = () => {
+                    DOM.btnModalConfirm.removeEventListener('click', onConfirm);
+                    DOM.btnModalCancel.removeEventListener('click', onCancel);
+                    DOM.listImportModal.classList.add('hidden');
+                };
+                
+                DOM.btnModalConfirm.addEventListener('click', onConfirm);
+                DOM.btnModalCancel.addEventListener('click', onCancel);
+                DOM.listImportModal.classList.remove('hidden');
+            });
+            
+            if (!result) {
                 log('Import abgebrochen durch den Benutzer.', 'warning');
                 return;
             }
             
-            log(`Erstelle Liste "${listName}" mit ${entriesToProcess.length} Mitgliedern auf deinem Account...`, 'system');
+            let listUri = '';
+            let listName = '';
+            let existingDids = new Set();
             
-            if (isMock) {
-                await new Promise(resolve => setTimeout(resolve, 800));
-                log(`[Mock] Liste "${listName}" erfolgreich mit ${entriesToProcess.length} Mitgliedern erstellt.`, 'success');
-                alert(`[Mock] Liste "${listName}" wurde erfolgreich mit ${entriesToProcess.length} Mitgliedern erstellt!`);
-                fetchMyLists();
-            } else {
-                const createListRes = await apiFetch(`${state.session.serverUrl}/xrpc/com.atproto.repo.createRecord`, {
-                    method: 'POST',
-                    body: JSON.stringify({
-                        repo: state.session.did,
-                        collection: 'app.bsky.graph.list',
-                        record: {
-                            $type: 'app.bsky.graph.list',
-                            name: listName,
-                            purpose: 'app.bsky.graph.defs#curatelist',
-                            description: 'Importiert mit C.T.H.U.L.H.U. aus Backup',
-                            createdAt: new Date().toISOString()
-                        }
-                    })
-                });
-                const newListUri = createListRes.uri;
-                log(`Neue Liste erstellt: ${newListUri}. Füge Mitglieder hinzu...`, 'info');
+            if (result.mode === 'new') {
+                listName = result.name;
+                log(`Erstelle neue Liste "${listName}" mit ${entriesToProcess.length} Mitgliedern auf deinem Account...`, 'system');
                 
-                let successCount = 0;
-                for (const item of entriesToProcess) {
-                    try {
-                        await apiFetch(`${state.session.serverUrl}/xrpc/com.atproto.repo.createRecord`, {
-                            method: 'POST',
-                            body: JSON.stringify({
-                                repo: state.session.did,
-                                collection: 'app.bsky.graph.listitem',
-                                record: {
-                                    $type: 'app.bsky.graph.listitem',
-                                    subject: item.did,
-                                    list: newListUri,
-                                    createdAt: new Date().toISOString()
-                                }
-                            })
-                        });
-                        log(`Hinzugefügt zu Liste: @${item.handle || item.did}`, 'success');
-                        successCount++;
-                        await new Promise(resolve => setTimeout(resolve, 100));
-                    } catch (itemErr) {
-                        log(`Fehler beim Hinzufügen von @${item.handle || item.did}: ${getErrorMessage(itemErr)}`, 'error');
-                    }
+                if (isMock) {
+                    await new Promise(resolve => setTimeout(resolve, 800));
+                    log(`[Mock] Liste "${listName}" erfolgreich erstellt.`, 'success');
+                    alert(`[Mock] Liste "${listName}" wurde erfolgreich mit ${entriesToProcess.length} Mitgliedern erstellt!`);
+                    fetchMyLists();
+                    return;
+                } else {
+                    const createListRes = await apiFetch(`${state.session.serverUrl}/xrpc/com.atproto.repo.createRecord`, {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            repo: state.session.did,
+                            collection: 'app.bsky.graph.list',
+                            record: {
+                                $type: 'app.bsky.graph.list',
+                                name: listName,
+                                purpose: 'app.bsky.graph.defs#curatelist',
+                                description: 'Importiert mit C.T.H.U.L.H.U. aus Backup',
+                                createdAt: new Date().toISOString()
+                            }
+                        })
+                    });
+                    listUri = createListRes.uri;
+                    log(`Neue Liste erstellt: ${listUri}. Füge Mitglieder hinzu...`, 'info');
+                }
+            } else {
+                listUri = result.uri;
+                const foundList = state.userLists.find(l => l.uri === listUri);
+                listName = foundList ? foundList.name : 'Bestehende Liste';
+                log(`Führe Backup-Import mit bestehender Liste "${listName}" zusammen...`, 'system');
+                
+                if (isMock) {
+                    await new Promise(resolve => setTimeout(resolve, 800));
+                    log(`[Mock] ${entriesToProcess.length} Konten mit Liste "${listName}" zusammengeführt.`, 'success');
+                    alert(`[Mock] ${entriesToProcess.length} Konten wurden erfolgreich mit der Liste "${listName}" zusammengeführt!`);
+                    return;
                 }
                 
-                log(`Import erfolgreich beendet! ${successCount} von ${entriesToProcess.length} Konten der Liste hinzugefügt.`, 'success');
-                alert(`Liste "${listName}" wurde erfolgreich erstellt und mit ${successCount} Mitgliedern befüllt.`);
-                fetchMyLists();
+                log('Lese bestehende Mitglieder ein, um Duplikate zu vermeiden...', 'info');
+                try {
+                    let cursor = '';
+                    do {
+                        let url = `${state.session.serverUrl}/xrpc/app.bsky.graph.getList?list=${encodeURIComponent(listUri)}&limit=100`;
+                        if (cursor) url += `&cursor=${encodeURIComponent(cursor)}`;
+                        const getRes = await apiFetch(url);
+                        if (getRes.items) {
+                            getRes.items.forEach(it => existingDids.add(it.subject.did));
+                        }
+                        cursor = getRes.cursor;
+                    } while (cursor);
+                } catch (getErr) {
+                    log(`Konnte bestehende Mitglieder nicht laden: ${getErrorMessage(getErr)}. Führe Import fort.`, 'warning');
+                }
             }
+            
+            const toAdd = entriesToProcess.filter(e => !existingDids.has(e.did));
+            if (toAdd.length === 0) {
+                log('Alle Konten aus dem Backup sind bereits in dieser Liste vorhanden.', 'info');
+                alert('Alle Konten aus dem Backup sind bereits in dieser Liste vorhanden.');
+                return;
+            }
+            
+            log(`Füge ${toAdd.length} Konten zu "${listName}" hinzu...`, 'info');
+            
+            let successCount = 0;
+            for (const item of toAdd) {
+                try {
+                    await apiFetch(`${state.session.serverUrl}/xrpc/com.atproto.repo.createRecord`, {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            repo: state.session.did,
+                            collection: 'app.bsky.graph.listitem',
+                            record: {
+                                $type: 'app.bsky.graph.listitem',
+                                subject: item.did,
+                                list: listUri,
+                                createdAt: new Date().toISOString()
+                            }
+                        })
+                    });
+                    log(`Hinzugefügt zu Liste: @${item.handle || item.did}`, 'success');
+                    successCount++;
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                } catch (itemErr) {
+                    log(`Fehler beim Hinzufügen von @${item.handle || item.did}: ${getErrorMessage(itemErr)}`, 'error');
+                }
+            }
+            
+            log(`Import erfolgreich beendet! ${successCount} von ${toAdd.length} Konten der Liste hinzugefügt.`, 'success');
+            alert(`${successCount} Konten wurden erfolgreich der Liste "${listName}" hinzugefügt.`);
+            fetchMyLists();
             
         } catch (err) {
             alert(`Fehler beim Importieren: ${err.message}`);
